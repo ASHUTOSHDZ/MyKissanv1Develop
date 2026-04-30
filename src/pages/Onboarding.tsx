@@ -137,6 +137,7 @@ const Onboarding = () => {
   }, [user, navigate]);
 
   const isFarmer = role === "farmer";
+  const onboardingTitle = isFarmer ? "Farmer onboarding" : "Profile onboarding";
   const totalSteps = isFarmer ? 4 : 2;
 
   const setField = (key: OnboardingFieldName, value: string) => {
@@ -245,7 +246,7 @@ const Onboarding = () => {
           <p className="text-[10px] sm:text-xs font-bold tracking-widest uppercase text-primary mb-3">
             Step {step} of {totalSteps}
           </p>
-          <h1 className="font-display font-black text-3xl sm:text-5xl text-secondary mb-3">Farmer onboarding</h1>
+          <h1 className="font-display font-black text-3xl sm:text-5xl text-secondary mb-3">{onboardingTitle}</h1>
           <p className="text-sm sm:text-base text-secondary/60">
             One-time setup. Keep it short and practical.
           </p>
