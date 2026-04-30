@@ -5,6 +5,8 @@ import { Navbar } from "@/components/Navbar";
 import { getProfile, isOnboardingComplete, type OnboardingProfile } from "@/lib/onboarding";
 import { FarmerDashboard } from "@/pages/FarmerDashboard";
 import { WorkerDashboard } from "@/pages/WorkerDashboard";
+import { VehicleOwnerDashboard } from "@/pages/VehicleOwnerDashboard";
+import { VendorDashboard } from "@/pages/VendorDashboard";
 
 const Dashboard = () => {
   const { user, isLoaded } = useUser();
@@ -48,16 +50,26 @@ const Dashboard = () => {
   if (profile.role === "worker") {
     return <WorkerDashboard profile={profile} />;
   }
+  if (profile.role === "vehicle_owner") {
+    return <VehicleOwnerDashboard profile={profile} />;
+  }
+  if (profile.role === "vendor") {
+    return <VendorDashboard profile={profile} />;
+  }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-background to-lime-50/40">
       <Navbar />
-      <main className="max-w-2xl mx-auto px-6 py-20 text-center space-y-4">
-        <h1 className="font-display text-3xl font-black text-secondary">Dashboard</h1>
-        <p className="text-secondary/70 font-medium">
+      <main className="max-w-3xl mx-auto px-6 py-20">
+        <section className="relative overflow-hidden rounded-[28px] border border-emerald-200/70 bg-gradient-to-br from-white via-emerald-50/70 to-lime-50 p-8 sm:p-10 text-center space-y-4 shadow-[0_18px_48px_-18px_rgba(16,185,129,0.35)]">
+          <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-emerald-200/35 blur-3xl" />
+          <div className="pointer-events-none absolute -left-20 -bottom-20 h-56 w-56 rounded-full bg-lime-200/35 blur-3xl" />
+          <h1 className="relative font-display text-3xl sm:text-5xl font-black text-emerald-900 tracking-tight">Dashboard</h1>
+          <p className="relative text-emerald-900/70 font-medium leading-relaxed">
           Your role ({profile.role}) does not have a full dashboard in this preview yet. Switch to Farmer or Worker in
           onboarding to try job posting and listings.
-        </p>
+          </p>
+        </section>
       </main>
     </div>
   );
