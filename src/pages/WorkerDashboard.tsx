@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useUser } from "@clerk/clerk-react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { Navbar } from "@/components/Navbar";
 import { ROLE_LABELS, type OnboardingProfile } from "@/lib/onboarding";
 import { createAnonymousSupabaseClient, isSupabaseConfigured } from "@/lib/supabaseBrowser";
@@ -14,7 +16,8 @@ import { WorkerJobDetailSheet } from "@/components/jobs/WorkerJobDetailSheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FARM_JOBS_TABLE, listJobsWithFilters, type JobPost } from "@/lib/jobPosts";
+import { FARM_JOBS_TABLE, listAllRecentJobs, listJobsWithFilters, type JobPost } from "@/lib/jobPosts";
+import { getWorkerProfileByUserId, upsertWorkerProfile, type WorkerGender } from "@/lib/workerProfiles";
 import aiScanCrop from "@/assets/ai-scan-crop.jpg";
 
 type WorkerDashboardProps = {
@@ -29,16 +32,17 @@ type JobFilterForm = {
 };
 
 export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
+  const { user } = useUser();
   const supabase = useMemo(() => createAnonymousSupabaseClient(), []);
 
   const defaultFilters = useMemo<JobFilterForm>(
     () => ({
-      pincode: profile.pincode,
-      district: profile.district,
-      block: profile.block,
+      pincode: "",
+      district: "",
+      block: "",
       minWage: "",
     }),
-    [profile.pincode, profile.district, profile.block],
+    [],
   );
 
   const [draftFilters, setDraftFilters] = useState<JobFilterForm>(defaultFilters);
@@ -49,6 +53,20 @@ export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [detailJob, setDetailJob] = useState<JobPost | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [workerProfileExists, setWorkerProfileExists] = useState(false);
+  const [editingWorkerProfile, setEditingWorkerProfile] = useState(true);
+  const [workerSkillsInput, setWorkerSkillsInput] = useState("");
+  const [workerForm, setWorkerForm] = useState({
+    minCostPerDay: "500",
+    age: "",
+    gender: "male" as WorkerGender,
+    availableFrom: "",
+    availableTo: "",
+    isOnline: true,
+    skills: [] as string[],
+    bio: "",
+  });
 
   const { forecast, selectedForecastDay, setSelectedForecastDay, weatherApiConfigured } = useFarmWeatherForecast({
     pincode: profile.pincode,
@@ -70,7 +88,7 @@ export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
 
   const loadJobs = useCallback(async () => {
     if (!supabase || !isSupabaseConfigured()) {
-      setJobsError("Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, run supabase/farm_jobs.sql, then reload.");
+      setJobsError("Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, run supabase/production_schema.sql, then restart/reload.");
       setJobs([]);
       setJobsLoading(false);
       return;
@@ -78,7 +96,7 @@ export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
 
     const pincodeInput = appliedFilters.pincode.trim();
     const districtInput = appliedFilters.district.trim();
-    const pincodeArg = pincodeInput || (districtInput ? undefined : profile.pincode);
+    const pincodeArg = pincodeInput || undefined;
     const districtArg = districtInput || undefined;
     const blockArg = appliedFilters.block.trim() || undefined;
     const minParsed = parseInt(appliedFilters.minWage.trim(), 10);
@@ -87,12 +105,15 @@ export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
 
     setJobsLoading(true);
     setJobsError(null);
-    const { data, error } = await listJobsWithFilters(supabase, {
-      pincode: pincodeArg,
-      district: districtArg,
-      block: blockArg,
-      minWagePerDay: minWageArg,
-    });
+    const hasAnyFilter = Boolean(pincodeArg || districtArg || blockArg || minWageArg);
+    const { data, error } = hasAnyFilter
+      ? await listJobsWithFilters(supabase, {
+          pincode: pincodeArg,
+          district: districtArg,
+          block: blockArg,
+          minWagePerDay: minWageArg,
+        })
+      : await listAllRecentJobs(supabase);
     setJobsLoading(false);
     if (error) {
       setJobsError(error.message);
@@ -100,7 +121,7 @@ export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
       return;
     }
     setJobs(data ?? []);
-  }, [supabase, appliedFilters, profile.pincode]);
+  }, [supabase, appliedFilters]);
 
   useEffect(() => {
     void loadJobs();
@@ -127,6 +148,26 @@ export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
     };
   }, [supabase, loadJobs]);
 
+  useEffect(() => {
+    if (!supabase || !isSupabaseConfigured() || !user?.id) return;
+    void (async () => {
+      const { data, error } = await getWorkerProfileByUserId(supabase, user.id);
+      if (error || !data) return;
+      setWorkerProfileExists(true);
+      setEditingWorkerProfile(false);
+      setWorkerForm({
+        minCostPerDay: String(data.minCostPerDay),
+        age: data.age ? String(data.age) : "",
+        gender: data.gender,
+        availableFrom: data.availableFrom ?? "",
+        availableTo: data.availableTo ?? "",
+        isOnline: data.isOnline,
+        skills: data.skills,
+        bio: data.bio,
+      });
+    })();
+  }, [supabase, user?.id]);
+
   const name = profile.fullName.split(" ")[0];
 
   const formatWhen = (iso: string) =>
@@ -144,6 +185,110 @@ export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
   const resetFilters = () => {
     setDraftFilters(defaultFilters);
     setAppliedFilters(defaultFilters);
+  };
+
+  const addSkill = () => {
+    const v = workerSkillsInput.trim();
+    if (!v) return;
+    if (workerForm.skills.includes(v)) {
+      setWorkerSkillsInput("");
+      return;
+    }
+    setWorkerForm((f) => ({ ...f, skills: [...f.skills, v] }));
+    setWorkerSkillsInput("");
+  };
+
+  const saveWorkerProfile = async () => {
+    if (!supabase || !user?.id) {
+      toast.error("Worker profile save failed: Supabase or user missing.");
+      return;
+    }
+    const minCost = parseInt(workerForm.minCostPerDay, 10);
+    const age = workerForm.age.trim() ? parseInt(workerForm.age, 10) : null;
+    if (!Number.isFinite(minCost) || minCost < 1) {
+      toast.error("Enter valid minimum cost per day.");
+      return;
+    }
+    if (age != null && (!Number.isFinite(age) || age < 18 || age > 100)) {
+      toast.error("Age must be between 18 and 100.");
+      return;
+    }
+    if (!workerForm.availableFrom || !workerForm.availableTo) {
+      toast.error("Select availability date range.");
+      return;
+    }
+    if (workerForm.availableFrom > workerForm.availableTo) {
+      toast.error("Available from date must be before available to date.");
+      return;
+    }
+    if (workerForm.skills.length === 0) {
+      toast.error("Add at least one skill.");
+      return;
+    }
+
+    setProfileSaving(true);
+    const { error } = await upsertWorkerProfile(supabase, {
+      userId: user.id,
+      fullName: profile.fullName,
+      phone: profile.phone,
+      state: profile.state,
+      district: profile.district,
+      block: profile.block,
+      pincode: profile.pincode,
+      skills: workerForm.skills,
+      minCostPerDay: minCost,
+      age,
+      gender: workerForm.gender,
+      availableFrom: workerForm.availableFrom,
+      availableTo: workerForm.availableTo,
+      isOnline: workerForm.isOnline,
+      bio: workerForm.bio,
+    });
+    setProfileSaving(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setWorkerProfileExists(true);
+    setEditingWorkerProfile(false);
+    toast.success("Worker profile updated.");
+  };
+
+  const toggleWorkerOnlineStatus = async () => {
+    if (!supabase || !user?.id) return;
+    const nextOnline = !workerForm.isOnline;
+    const minCost = parseInt(workerForm.minCostPerDay, 10);
+    const age = workerForm.age.trim() ? parseInt(workerForm.age, 10) : null;
+    if (!Number.isFinite(minCost) || minCost < 1) {
+      toast.error("Set a valid minimum cost before changing status.");
+      return;
+    }
+
+    setProfileSaving(true);
+    const { error } = await upsertWorkerProfile(supabase, {
+      userId: user.id,
+      fullName: profile.fullName,
+      phone: profile.phone,
+      state: profile.state,
+      district: profile.district,
+      block: profile.block,
+      pincode: profile.pincode,
+      skills: workerForm.skills,
+      minCostPerDay: minCost,
+      age,
+      gender: workerForm.gender,
+      availableFrom: workerForm.availableFrom || null,
+      availableTo: workerForm.availableTo || null,
+      isOnline: nextOnline,
+      bio: workerForm.bio,
+    });
+    setProfileSaving(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setWorkerForm((f) => ({ ...f, isOnline: nextOnline }));
+    toast.success(nextOnline ? "You are now online for farmers." : "You are now offline.");
   };
 
   useEffect(() => {
@@ -172,9 +317,182 @@ export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
         </section>
 
         <section className="rounded-3xl border border-primary/10 bg-card p-5 sm:p-6 shadow-card hover:shadow-soft transition-all duration-300">
+          <h2 className="font-display text-2xl font-black text-secondary mb-1">My worker profile</h2>
+          <p className="text-sm text-secondary/65 mb-4">
+            Farmers discover you from this profile. Switch online to appear in farmer dashboard.
+          </p>
+          {workerProfileExists && !editingWorkerProfile ? (
+            <div className="space-y-4">
+              <div
+                className={`rounded-2xl border p-4 transition-colors ${
+                  workerForm.isOnline
+                    ? "border-emerald-300 bg-emerald-50"
+                    : "border-primary/10 bg-muted/40"
+                }`}
+              >
+                <div className="mb-2">
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                      workerForm.isOnline
+                        ? "bg-emerald-600 text-white"
+                        : "bg-secondary/20 text-secondary"
+                    }`}
+                  >
+                    {workerForm.isOnline ? "Online" : "Offline"}
+                  </span>
+                </div>
+                <p className="font-semibold text-secondary">{profile.fullName}</p>
+                <p className="text-xs text-secondary/70 mt-1">
+                  {workerForm.gender.toUpperCase()} · {workerForm.age ? `${workerForm.age} years` : "Age not set"} · ₹
+                  {workerForm.minCostPerDay}/day
+                </p>
+                <p className="text-xs text-secondary/70 mt-1">
+                  Availability: {workerForm.availableFrom || "-"} to {workerForm.availableTo || "-"}
+                </p>
+                <p className="text-xs text-secondary/70 mt-1">Skills: {workerForm.skills.join(", ") || "Not set"}</p>
+                {workerForm.bio ? <p className="text-xs text-secondary/70 mt-1">Bio: {workerForm.bio}</p> : null}
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  type="button"
+                  variant={workerForm.isOnline ? "default" : "outline"}
+                  className={`font-bold uppercase tracking-widest text-xs ${
+                    workerForm.isOnline ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""
+                  }`}
+                  disabled={profileSaving}
+                  onClick={() => void toggleWorkerOnlineStatus()}
+                >
+                  {workerForm.isOnline ? "Online" : "Offline"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="font-bold uppercase tracking-widest text-xs"
+                  onClick={() => setEditingWorkerProfile(true)}
+                >
+                  Update Profile
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="worker-min-cost">Minimum cost (₹ / day)</Label>
+              <Input
+                id="worker-min-cost"
+                inputMode="numeric"
+                value={workerForm.minCostPerDay}
+                onChange={(e) => setWorkerForm((f) => ({ ...f, minCostPerDay: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="worker-age">Age</Label>
+              <Input
+                id="worker-age"
+                inputMode="numeric"
+                value={workerForm.age}
+                onChange={(e) => setWorkerForm((f) => ({ ...f, age: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="worker-gender">Gender</Label>
+              <select
+                id="worker-gender"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={workerForm.gender}
+                onChange={(e) => setWorkerForm((f) => ({ ...f, gender: e.target.value as WorkerGender }))}
+              >
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="worker-online">Visibility</Label>
+              <select
+                id="worker-online"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={workerForm.isOnline ? "online" : "offline"}
+                onChange={(e) => setWorkerForm((f) => ({ ...f, isOnline: e.target.value === "online" }))}
+              >
+                <option value="online">Online (show to farmers)</option>
+                <option value="offline">Offline (hide from farmers)</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="worker-available-from">Available from</Label>
+              <Input
+                id="worker-available-from"
+                type="date"
+                value={workerForm.availableFrom}
+                onChange={(e) => setWorkerForm((f) => ({ ...f, availableFrom: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="worker-available-to">Available to</Label>
+              <Input
+                id="worker-available-to"
+                type="date"
+                value={workerForm.availableTo}
+                onChange={(e) => setWorkerForm((f) => ({ ...f, availableTo: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            <Label htmlFor="worker-skill-input">Skills</Label>
+            <div className="flex gap-2">
+              <Input
+                id="worker-skill-input"
+                placeholder="e.g. Harvesting"
+                value={workerSkillsInput}
+                onChange={(e) => setWorkerSkillsInput(e.target.value)}
+              />
+              <Button type="button" variant="secondary" onClick={addSkill}>
+                Add
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {workerForm.skills.map((skill) => (
+                <button
+                  key={skill}
+                  type="button"
+                  className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-bold text-primary"
+                  onClick={() => setWorkerForm((f) => ({ ...f, skills: f.skills.filter((s) => s !== skill) }))}
+                >
+                  {skill} ✕
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            <Label htmlFor="worker-bio">Short bio</Label>
+            <Input
+              id="worker-bio"
+              placeholder="Experience, preferred work, timings..."
+              value={workerForm.bio}
+              onChange={(e) => setWorkerForm((f) => ({ ...f, bio: e.target.value }))}
+            />
+          </div>
+
+          <div className="mt-4">
+            <Button type="button" className="bg-primary font-bold uppercase tracking-widest text-xs" disabled={profileSaving} onClick={saveWorkerProfile}>
+              {profileSaving ? "Saving..." : "Save worker profile"}
+            </Button>
+          </div>
+            </>
+          )}
+        </section>
+
+        <section className="rounded-3xl border border-primary/10 bg-card p-5 sm:p-6 shadow-card hover:shadow-soft transition-all duration-300">
           <h2 className="font-display text-2xl font-black text-secondary mb-1">Find jobs</h2>
           <p className="text-sm text-secondary/65 mb-4">
-            Filter by location and minimum daily wage. At least one of <strong>pincode</strong> or <strong>district</strong> is required; empty pincode falls back to your profile pincode unless you search by district only.
+            All live jobs are shown by default. Use filters to narrow by location and minimum daily wage.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -222,7 +540,7 @@ export const WorkerDashboard = ({ profile }: WorkerDashboardProps) => {
               Apply filters
             </Button>
             <Button type="button" variant="outline" className="font-bold uppercase tracking-widest text-xs" onClick={resetFilters}>
-              Reset to my area
+              Clear filters
             </Button>
           </div>
 

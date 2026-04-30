@@ -166,6 +166,23 @@ export async function listJobsWithFilters(
   return { data: (data as FarmJobRow[]).map(rowToJobPost), error: null };
 }
 
+/**
+ * List recent active jobs without location filters.
+ * Use this for "show all jobs" feeds in worker UI.
+ */
+export async function listAllRecentJobs(
+  client: SupabaseClient,
+): Promise<{ data: JobPost[] | null; error: Error | null }> {
+  const { data, error } = await client
+    .from(FARM_JOBS_TABLE)
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) return { data: null, error: new Error(error.message) };
+  return { data: (data as FarmJobRow[]).map(rowToJobPost), error: null };
+}
+
 export async function listJobsByPincode(
   client: SupabaseClient,
   pincode: string,
