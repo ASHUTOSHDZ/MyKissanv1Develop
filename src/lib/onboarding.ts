@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createAnonymousSupabaseClient, isSupabaseConfigured } from "@/lib/supabaseBrowser";
 
 export type UserRole = "farmer" | "worker" | "vendor" | "vehicle_owner";
 
@@ -19,23 +19,9 @@ export interface OnboardingProfile {
 const KEY_PREFIX = "mykissan:profile:";
 const TABLE = "profiles";
 
-const rawSupabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-const supabaseUrl = rawSupabaseUrl
-  ? rawSupabaseUrl
-      .trim()
-      .replace(/\/+$/, "")
-      .replace(/\/rest\/v1$/i, "")
-  : undefined;
-const hasSupabase = Boolean(supabaseUrl && supabaseAnonKey);
-
-const supabase = hasSupabase
-  ? createClient(supabaseUrl!, supabaseAnonKey!)
-  : null;
+const supabase = createAnonymousSupabaseClient();
 
 type ProfileRow = OnboardingProfile & { user_id: string };
-
-export const isSupabaseConfigured = () => hasSupabase;
 
 const localGetProfile = (userId: string): OnboardingProfile | null => {
   try {
@@ -51,7 +37,7 @@ const localSaveProfile = (userId: string, profile: OnboardingProfile | Partial<O
 };
 
 export const getProfile = async (userId: string): Promise<OnboardingProfile | null> => {
-  if (!supabase) return localGetProfile(userId);
+  if (!supabase || !isSupabaseConfigured()) return localGetProfile(userId);
   const { data, error } = await supabase
     .from(TABLE)
     .select("role,fullName,phone,state,district,block,village,pincode,crops,farmSize,mainCrop")
@@ -65,7 +51,7 @@ export const getProfile = async (userId: string): Promise<OnboardingProfile | nu
 };
 
 export const saveProfile = async (userId: string, profile: OnboardingProfile) => {
-  if (!supabase) {
+  if (!supabase || !isSupabaseConfigured()) {
     localSaveProfile(userId, profile);
     return;
   }
@@ -80,7 +66,7 @@ export const saveProfile = async (userId: string, profile: OnboardingProfile) =>
 export const saveRole = async (userId: string, role: UserRole) => {
   const existing = await getProfile(userId);
   const next = { ...(existing ?? {}), role };
-  if (!supabase) {
+  if (!supabase || !isSupabaseConfigured()) {
     localSaveProfile(userId, next);
     return;
   }

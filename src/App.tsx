@@ -8,7 +8,8 @@ import Index from "./pages/Index.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import RoleSelect from "./pages/RoleSelect.tsx";
 import Onboarding from "./pages/Onboarding.tsx";
-import Welcome from "./pages/Welcome.tsx";
+import Dashboard from "./pages/Dashboard.tsx";
+import WorkerJobChatPage from "./pages/WorkerJobChat.tsx";
 import AiScan from "./pages/AiScan.tsx";
 
 const queryClient = new QueryClient();
@@ -23,7 +24,8 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/role" element={<RequireAuth><RoleSelect /></RequireAuth>} />
           <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
-          <Route path="/dashboard" element={<RequireAuth><Welcome /></RequireAuth>} />
+          <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
+          <Route path="/worker/jobs/:jobId/chat" element={<RequireAuth><WorkerJobChatPage /></RequireAuth>} />
           <Route path="/ai-scan" element={<AiScan />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
