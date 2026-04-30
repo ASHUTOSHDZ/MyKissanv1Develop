@@ -13,9 +13,7 @@ export type FarmerProfilePublic = {
   pincode: string;
 };
 
-/**
- * Reads `public.profiles` for the posting farmer (anon key must be allowed to SELECT this row in Supabase).
- */
+/** Reads `public.profiles` for the posting farmer through authenticated RLS policies. */
 export async function fetchFarmerProfilePublic(
   client: SupabaseClient,
   farmerUserId: string,

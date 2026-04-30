@@ -232,7 +232,7 @@ export const JobPostDialog = ({ open, onOpenChange, supabase, profile, userId, j
             {jobToEdit ? "Update job posting" : "Post a farm job"}
           </DialogTitle>
           <DialogDescription>
-            Saved to Supabase table <code className="text-xs">farm_jobs</code> using the project anon key. Workers see jobs for the same pincode via filtered queries.
+            Saved to Supabase table <code className="text-xs">farm_jobs</code> with authenticated Clerk JWT + RLS policies.
           </DialogDescription>
         </DialogHeader>
 

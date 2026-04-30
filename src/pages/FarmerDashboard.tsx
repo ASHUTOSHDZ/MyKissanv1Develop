@@ -7,6 +7,10 @@ import { createAnonymousSupabaseClient, isSupabaseConfigured } from "@/lib/supab
 import { useFarmWeatherForecast } from "@/hooks/useFarmWeatherForecast";
 import { deleteJob, FARM_JOBS_TABLE, listJobsForFarmer, type JobPost } from "@/lib/jobPosts";
 import { JobPostDialog } from "@/components/jobs/JobPostDialog";
+import { listWorkersForFarmer, type WorkerProfile } from "@/lib/workerProfiles";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,10 +43,17 @@ export const FarmerDashboard = ({ profile, userId }: FarmerDashboardProps) => {
   const [myJobs, setMyJobs] = useState<JobPost[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobsError, setJobsError] = useState<string | null>(null);
+  const [workers, setWorkers] = useState<WorkerProfile[]>([]);
+  const [workerError, setWorkerError] = useState<string | null>(null);
+  const [workerLoading, setWorkerLoading] = useState(true);
+  const [workerSkillFilter, setWorkerSkillFilter] = useState("");
+  const [workerPincodeFilter, setWorkerPincodeFilter] = useState(profile.pincode);
+  const [workerMaxCostFilter, setWorkerMaxCostFilter] = useState("");
+  const [selectedWorker, setSelectedWorker] = useState<WorkerProfile | null>(null);
 
   const loadMyJobs = useCallback(async () => {
     if (!supabase || !isSupabaseConfigured()) {
-      setJobsError("Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, run supabase/farm_jobs.sql, then reload.");
+      setJobsError("Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, run supabase/production_schema.sql, then restart/reload.");
       setMyJobs([]);
       setJobsLoading(false);
       return;
@@ -85,13 +96,58 @@ export const FarmerDashboard = ({ profile, userId }: FarmerDashboardProps) => {
     };
   }, [supabase, profile.pincode, userId, loadMyJobs]);
 
+  const loadWorkers = useCallback(async () => {
+    if (!supabase || !isSupabaseConfigured()) {
+      setWorkers([]);
+      setWorkerLoading(false);
+      setWorkerError("Supabase not configured.");
+      return;
+    }
+    setWorkerLoading(true);
+    setWorkerError(null);
+    const maxCost = parseInt(workerMaxCostFilter, 10);
+    const { data, error } = await listWorkersForFarmer(supabase, {
+      pincode: workerPincodeFilter.trim() || undefined,
+      skill: workerSkillFilter.trim() || undefined,
+      maxCostPerDay: Number.isFinite(maxCost) && maxCost > 0 ? maxCost : undefined,
+      onlyOnline: true,
+    });
+    setWorkerLoading(false);
+    if (error) {
+      setWorkerError(error.message);
+      setWorkers([]);
+      return;
+    }
+    setWorkers(data ?? []);
+  }, [supabase, workerMaxCostFilter, workerPincodeFilter, workerSkillFilter]);
+
+  useEffect(() => {
+    void loadWorkers();
+  }, [loadWorkers]);
+
+  useEffect(() => {
+    if (!supabase || !isSupabaseConfigured()) return;
+
+    const channel = supabase
+      .channel(`worker_profiles_farmer:${workerPincodeFilter || "all"}:${workerSkillFilter || "all"}:${workerMaxCostFilter || "all"}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "worker_profiles",
+        },
+        () => void loadWorkers(),
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, loadWorkers, workerPincodeFilter, workerSkillFilter, workerMaxCostFilter]);
+
   const name = profile.fullName.split(" ")[0];
   const crops = profile.crops?.length ? profile.crops : ["Rice", "Vegetables"];
-  const workers = [
-    { name: "Suresh", pay: "₹350/day", status: "Available" },
-    { name: "Raju", pay: "₹400/day", status: "Offline" },
-  ];
-
   const formatJobWhen = (iso: string) =>
     new Date(iso).toLocaleString("en-IN", {
       day: "numeric",
@@ -113,8 +169,8 @@ export const FarmerDashboard = ({ profile, userId }: FarmerDashboardProps) => {
           <p className="text-sm sm:text-base text-secondary/70 mt-2">Pincode: {profile.pincode} · Crops: {crops.join(", ")}</p>
           {!isSupabaseConfigured() || !supabase ? (
             <p className="mt-4 text-sm font-medium text-destructive/90 rounded-xl border border-destructive/25 bg-destructive/5 p-3">
-              Job posting needs Supabase env vars. If jobs fail with “permission denied”, run{" "}
-              <code className="text-xs font-bold">supabase/farm_jobs_anon_fix.sql</code> once to turn off JWT-era RLS, then reload.
+              Job posting needs Supabase env vars. Run{" "}
+              <code className="text-xs font-bold">supabase/production_schema.sql</code> in Supabase SQL editor, then reload.
             </p>
           ) : null}
           <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -220,16 +276,53 @@ export const FarmerDashboard = ({ profile, userId }: FarmerDashboardProps) => {
         </section>
 
         <section className="rounded-3xl border border-primary/10 bg-card p-5 sm:p-6 shadow-card hover:shadow-soft transition-all duration-300">
-          <h2 className="font-display text-2xl font-black text-secondary mb-4">Nearby Workers (Same Pincode)</h2>
-          <div className="space-y-3">
-            {workers.map((w) => (
-              <div key={w.name} className="rounded-2xl border border-primary/10 p-4 bg-muted/50 flex items-center justify-between transition hover:border-primary/40 hover:bg-primary/5">
-                <p className="font-semibold text-secondary">{w.name} - {w.pay}</p>
-                <p className={`text-xs font-bold ${w.status === "Available" ? "text-primary" : "text-secondary/50"}`}>{w.status}</p>
-              </div>
-            ))}
+          <h2 className="font-display text-2xl font-black text-secondary mb-4">Workers</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="space-y-1">
+              <Label htmlFor="worker-filter-pin">Pincode</Label>
+              <Input id="worker-filter-pin" value={workerPincodeFilter} onChange={(e) => setWorkerPincodeFilter(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="worker-filter-skill">Skill</Label>
+              <Input id="worker-filter-skill" value={workerSkillFilter} onChange={(e) => setWorkerSkillFilter(e.target.value)} placeholder="e.g. Harvesting" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="worker-filter-cost">Max cost/day</Label>
+              <Input id="worker-filter-cost" value={workerMaxCostFilter} onChange={(e) => setWorkerMaxCostFilter(e.target.value)} inputMode="numeric" />
+            </div>
           </div>
-          <p className="text-xs font-semibold text-secondary/50 mt-3">Realtime worker data will be connected from worker role profiles.</p>
+          <div className="mb-4">
+            <Button type="button" className="bg-primary text-xs font-bold uppercase tracking-widest" onClick={() => void loadWorkers()}>
+              Apply worker filters
+            </Button>
+          </div>
+          {workerLoading ? (
+            <p className="text-sm text-secondary/60 font-medium">Loading workers...</p>
+          ) : workerError ? (
+            <p className="text-sm font-medium text-destructive">{workerError}</p>
+          ) : workers.length === 0 ? (
+            <p className="text-sm text-secondary/65 font-medium">No online workers found for selected filters.</p>
+          ) : (
+            <div className="space-y-3">
+              {workers.map((w) => (
+                <button
+                  key={w.userId}
+                  type="button"
+                  className={`w-full rounded-2xl border p-4 bg-muted/50 text-left transition hover:border-primary/40 hover:bg-primary/5 ${
+                    w.gender === "female" ? "border-pink-300/60 bg-pink-50/40" : "border-primary/10"
+                  }`}
+                  onClick={() => setSelectedWorker(w)}
+                >
+                  <p className="font-semibold text-secondary">{w.fullName}</p>
+                  <p className="text-xs text-secondary/70 mt-1">
+                    {w.gender.toUpperCase()} · {w.age ? `${w.age} yrs` : "Age N/A"} · ₹{w.minCostPerDay}/day
+                  </p>
+                  <p className="text-xs text-secondary/65 mt-1">{w.block}, {w.district} · PIN {w.pincode}</p>
+                  <p className="text-xs text-secondary/70 mt-2">Skills: {w.skills.join(", ")}</p>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="rounded-3xl border border-primary/10 bg-card p-5 sm:p-6 shadow-card hover:shadow-soft transition-all duration-300">
@@ -293,7 +386,7 @@ export const FarmerDashboard = ({ profile, userId }: FarmerDashboardProps) => {
             </div>
           )}
           <p className="text-xs font-semibold text-secondary/50 mt-3">
-            Jobs live in Supabase (<code className="text-[10px]">farm_jobs</code>). The app filters by pincode and farmer id in queries; tighten with RLS or Edge Functions when you are ready for production.
+            Jobs live in Supabase (<code className="text-[10px]">farm_jobs</code>) with anon-safe policies; use Edge Functions for strict ownership in production.
           </p>
         </section>
 
@@ -361,6 +454,38 @@ export const FarmerDashboard = ({ profile, userId }: FarmerDashboardProps) => {
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!selectedWorker} onOpenChange={(o) => !o && setSelectedWorker(null)}>
+        <AlertDialogContent className="rounded-2xl">
+          {!selectedWorker ? null : (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{selectedWorker.fullName}</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {selectedWorker.gender.toUpperCase()} · {selectedWorker.age ? `${selectedWorker.age} years` : "Age not shared"} · ₹
+                  {selectedWorker.minCostPerDay}/day
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="space-y-2 text-sm text-secondary/85">
+                <p>Phone: <span className="font-semibold">{selectedWorker.phone}</span></p>
+                <p>Area: {selectedWorker.block}, {selectedWorker.district}, {selectedWorker.state} - {selectedWorker.pincode}</p>
+                <p>Availability: {selectedWorker.availableFrom ?? "-"} to {selectedWorker.availableTo ?? "-"}</p>
+                <p>Skills: {selectedWorker.skills.join(", ")}</p>
+                {selectedWorker.bio ? <p>Bio: {selectedWorker.bio}</p> : null}
+              </div>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Close</AlertDialogCancel>
+                <AlertDialogAction asChild>
+                  <a href={`tel:${selectedWorker.phone.replace(/\s+/g, "")}`}>Call</a>
+                </AlertDialogAction>
+                <AlertDialogAction onClick={() => toast.message("Chat module will be connected here soon.")}>
+                  Chat (Soon)
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          )}
         </AlertDialogContent>
       </AlertDialog>
     </div>
